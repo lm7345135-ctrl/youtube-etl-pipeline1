@@ -1,0 +1,22 @@
+name: UmaMusume ETL
+on:
+  schedule:
+    - cron: '0 12 * * *' # 毎日12時に実行
+  workflow_dispatch:      # 手動実行ボタンを有効化
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      GCP_PROJECT_ID: 'youtube-analysis-v2-499813'
+      BQ_DATASET: 'youtube_data'
+      BRAND_NAME: 'UMAMUSUME'
+      TARGET_CHANNEL_ID: ${{ secrets.CHANNEL_ID_UMAMUSUME }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with: {python-version: '3.9'}
+      - run: |
+          pip install google-api-python-client google-cloud-bigquery tenacity
+          python main.py
