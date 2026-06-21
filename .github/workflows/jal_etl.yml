@@ -10,7 +10,7 @@ jobs:
       GCP_PROJECT_ID: 'youtube-analysis-v2-499813'
       BQ_DATASET: 'youtube_data'
       BRAND_NAME: 'JAL'
-      TARGET_CHANNEL_ID: 'UC866LucISVOcPmrK2kvx2hg'
+      TARGET_CHANNEL_ID: 'UCfs-dCrHxlmYedwPdl9ix-g'
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
