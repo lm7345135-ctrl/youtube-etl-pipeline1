@@ -122,8 +122,11 @@ def main():
         load_local_file_to_bigquery(temp_file, BQ_DATASET, BQ_TABLE)
         os.remove(temp_file)
         
-    run_bigquery_queries()
-    print("🎉 全てのバッチ処理が正常に完了しました。")
+        # 🌟 ここがポイント：コメントがある時だけクレンジング処理を行う！
+        run_bigquery_queries()
+        print("🎉 全てのバッチ処理が正常に完了しました。")
+    else:
+        print("⚠️ 今回取得できたコメントは0件でした。BigQueryへの保存と整理をスキップして終了します。")
 
 if __name__ == "__main__":
     main()
