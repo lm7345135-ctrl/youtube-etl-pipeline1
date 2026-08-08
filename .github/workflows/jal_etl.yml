@@ -1,6 +1,8 @@
 name: JAL ETL
 on:
-  workflow_dispatch:
+  schedule:
+    - cron: '0 14 * * *' # 毎日14時に実行（ウマ娘の2時間後）
+  workflow_dispatch:      # 手動実行ボタンを有効化
 
 jobs:
   build:
