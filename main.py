@@ -4,21 +4,25 @@ import datetime
 from googleapiclient.discovery import build
 from google.cloud import bigquery
 from tenacity import retry, stop_after_attempt, wait_exponential
+from deep_translator import GoogleTranslator  # Added: Translation library
 
 # ==========================================
 # Load environment variables from GitHub Secrets
 # ==========================================
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
-BQ_DATASET = os.environ.get("BQ_DATASET")       # 例: youtube_data
+BQ_DATASET = os.environ.get("BQ_DATASET")       # Example: youtube_data
 TARGET_CHANNEL_ID = os.environ.get("TARGET_CHANNEL_ID")
 BRAND_NAME = os.environ.get("BRAND_NAME")       # 'UMAMUSUME' or 'JAL'
 
-# Dynamically set table name
+# Dynamically determine the table name
 BQ_TABLE = f"raw_comments_{BRAND_NAME.lower()}"
 
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 bq_client = bigquery.Client(project=GCP_PROJECT_ID)
+
+# Added: Initialize translation instance
+translator = GoogleTranslator(source='auto', target='en')
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def get_recent_videos(channel_id, max_videos=50):
@@ -27,7 +31,16 @@ def get_recent_videos(channel_id, max_videos=50):
     request = youtube.playlistItems().list(part="snippet,contentDetails", playlistId=uploads_playlist_id, maxResults=max_videos)
     response = request.execute()
     for item in response.get("items", []):
-        videos.append({"video_id": item["contentDetails"]["videoId"], "video_title": item["snippet"]["title"]})
+        raw_title = item["snippet"]["title"]
+        
+        # English translation process for video titles
+        try:
+            en_title = translator.translate(raw_title) if raw_title else ""
+        except Exception as e:
+            print(f"⚠️ Title translation error: {e}")
+            en_title = raw_title
+
+        videos.append({"video_id": item["contentDetails"]["videoId"], "video_title": en_title})
     return videos
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
@@ -37,11 +50,20 @@ def get_comments_for_video(video_info, channel_id, scraped_at):
     next_page_token = None
     while True:
         try:
-            # Safety guard: Catch errors so execution continues without breaking
+            # ★Safety mechanism: Catch errors here so the process doesn't stop
             request = youtube.commentThreads().list(part="snippet", videoId=video_id, maxResults=100, textFormat="plainText", pageToken=next_page_token)
             response = request.execute()
             for item in response.get("items", []):
                 snippet = item["snippet"]["topLevelComment"]["snippet"]
+                raw_text = snippet.get("textDisplay", "")
+                
+                # English translation process for comment text
+                try:
+                    en_text = translator.translate(raw_text) if raw_text.strip() else ""
+                except Exception as e:
+                    print(f"⚠️ Comment translation error: {e}")
+                    en_text = raw_text
+
                 comment_data = {
                     "comment_id": item["id"],
                     "video_id": video_id,
@@ -49,7 +71,7 @@ def get_comments_for_video(video_info, channel_id, scraped_at):
                     "channel_id": channel_id,
                     "brand": BRAND_NAME,
                     "author_channel_id": snippet.get("authorChannelId", {}).get("value", "UNKNOWN"),
-                    "text_original": snippet["textDisplay"],
+                    "text_english": en_text,  # Changed text_original to text_english
                     "like_count": snippet["likeCount"],
                     "reply_count": item["snippet"]["totalReplyCount"],
                     "published_at": snippet["publishedAt"],
@@ -60,8 +82,8 @@ def get_comments_for_video(video_info, channel_id, scraped_at):
             if not next_page_token: break
             
         except Exception as e:
-            print(f"⚠️ Skipped comment retrieval for video {video_id}: {e}")
-            break # Skip to next video if error occurs
+            print(f"⚠️ Skipped comment extraction for video {video_id}: {e}")
+            break # If an error occurs, give up on this video and proceed to the next
             
     return comments
 
@@ -74,21 +96,21 @@ def load_local_file_to_bigquery(file_path, dataset_id, table_id):
     )
     with open(file_path, "rb") as source_file:
         bq_client.load_table_from_file(source_file, table_ref, job_config=job_config).result()
-    print(f"✅ Load completed: {table_ref}")
+    print(f"✅ Successfully loaded into {table_ref}")
 
 def run_bigquery_queries():
-    print("⏳ Starting data cleansing in BigQuery...")
+    print("⏳ Starting data sorting (cleansing) in BigQuery...")
     
+    # Changed text_original to text_english in query_a and removed Japanese filters
     query_a = f"""
     CREATE OR REPLACE TABLE `{GCP_PROJECT_ID}.{BQ_DATASET}.dim_comments_{BRAND_NAME.lower()}` AS
     SELECT
       comment_id, video_id, video_title, author_channel_id, brand,
-      LOWER(REGEXP_REPLACE(text_original, r'<[^>]+>', '')) AS text_normalized,
-      text_original, TIMESTAMP(published_at) AS published_at,
+      LOWER(REGEXP_REPLACE(text_english, r'<[^>]+>', '')) AS text_normalized,
+      text_english, TIMESTAMP(published_at) AS published_at,
       MIN(TIMESTAMP(scraped_at)) OVER(PARTITION BY comment_id) AS first_scraped_at
     FROM `{GCP_PROJECT_ID}.{BQ_DATASET}.{BQ_TABLE}`
-    WHERE text_original IS NOT NULL AND TRIM(text_original) != ''
-      AND REGEXP_CONTAINS(text_original, r'[ぁ-んァ-ヶ一-龠a-zA-Z0-9!?！？。、ｗｗwW]')
+    WHERE text_english IS NOT NULL AND TRIM(text_english) != ''
     QUALIFY ROW_NUMBER() OVER(PARTITION BY comment_id ORDER BY scraped_at DESC) = 1;
     """
     
@@ -102,9 +124,9 @@ def run_bigquery_queries():
     """
     
     bq_client.query(query_a).result()
-    print(f"✅ Query A (dim_comments_{BRAND_NAME.lower()}) execution completed")
+    print(f"✅ Creation of Query A (dim_comments_{BRAND_NAME.lower()}) completed")
     bq_client.query(query_b).result()
-    print(f"✅ Query B (fct_like_history_{BRAND_NAME.lower()}) execution completed")
+    print(f"✅ Creation of Query B (fct_like_history_{BRAND_NAME.lower()}) completed")
 
 def main():
     scraped_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -122,11 +144,11 @@ def main():
         load_local_file_to_bigquery(temp_file, BQ_DATASET, BQ_TABLE)
         os.remove(temp_file)
         
-        # Note: Execute cleansing queries only when comments exist
+        # 🌟 Key point: Perform cleansing process only when there are comments!
         run_bigquery_queries()
-        print("🎉 All batch processing completed successfully.")
+        print("🎉 All batch processes completed successfully.")
     else:
-        print("⚠️ 0 comments retrieved. Skipping BigQuery loading and cleansing.")
+        print("⚠️ 0 comments were fetched this time. Skipping saving to BigQuery and organizing, then exiting.")
 
 if __name__ == "__main__":
     main()
