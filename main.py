@@ -6,15 +6,15 @@ from google.cloud import bigquery
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # ==========================================
-# GitHub Secretsから環境変数を読み込み
+# Load environment variables from GitHub Secrets
 # ==========================================
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 BQ_DATASET = os.environ.get("BQ_DATASET")       # 例: youtube_data
 TARGET_CHANNEL_ID = os.environ.get("TARGET_CHANNEL_ID")
-BRAND_NAME = os.environ.get("BRAND_NAME")       # 'UMAMUSUME' か 'JAL'
+BRAND_NAME = os.environ.get("BRAND_NAME")       # 'UMAMUSUME' or 'JAL'
 
-# 動的にテーブル名を決定
+# Dynamically set table name
 BQ_TABLE = f"raw_comments_{BRAND_NAME.lower()}"
 
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
@@ -37,7 +37,7 @@ def get_comments_for_video(video_info, channel_id, scraped_at):
     next_page_token = None
     while True:
         try:
-            # ★安全装置：エラーが起きてもここでキャッチして止まらないようにする
+            # Safety guard: Catch errors so execution continues without breaking
             request = youtube.commentThreads().list(part="snippet", videoId=video_id, maxResults=100, textFormat="plainText", pageToken=next_page_token)
             response = request.execute()
             for item in response.get("items", []):
@@ -60,8 +60,8 @@ def get_comments_for_video(video_info, channel_id, scraped_at):
             if not next_page_token: break
             
         except Exception as e:
-            print(f"⚠️ 動画 {video_id} のコメント取得をスキップしました: {e}")
-            break # エラーが出たらこの動画は諦めて次へ進む
+            print(f"⚠️ Skipped comment retrieval for video {video_id}: {e}")
+            break # Skip to next video if error occurs
             
     return comments
 
@@ -74,10 +74,10 @@ def load_local_file_to_bigquery(file_path, dataset_id, table_id):
     )
     with open(file_path, "rb") as source_file:
         bq_client.load_table_from_file(source_file, table_ref, job_config=job_config).result()
-    print(f"✅ {table_ref} へのロード完了")
+    print(f"✅ Load completed: {table_ref}")
 
 def run_bigquery_queries():
-    print("⏳ BigQuery内でデータの仕分け(クレンジング)を開始します...")
+    print("⏳ Starting data cleansing in BigQuery...")
     
     query_a = f"""
     CREATE OR REPLACE TABLE `{GCP_PROJECT_ID}.{BQ_DATASET}.dim_comments_{BRAND_NAME.lower()}` AS
@@ -102,9 +102,9 @@ def run_bigquery_queries():
     """
     
     bq_client.query(query_a).result()
-    print(f"✅ クエリA (dim_comments_{BRAND_NAME.lower()}) の作成完了")
+    print(f"✅ Query A (dim_comments_{BRAND_NAME.lower()}) execution completed")
     bq_client.query(query_b).result()
-    print(f"✅ クエリB (fct_like_history_{BRAND_NAME.lower()}) の作成完了")
+    print(f"✅ Query B (fct_like_history_{BRAND_NAME.lower()}) execution completed")
 
 def main():
     scraped_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -112,7 +112,7 @@ def main():
     all_comments = []
     
     for idx, v_info in enumerate(video_infos, 1):
-        print(f"[{idx}/{len(video_infos)}] 動画 {v_info['video_id']} を処理中...")
+        print(f"[{idx}/{len(video_infos)}] Processing video {v_info['video_id']}...")
         all_comments.extend(get_comments_for_video(v_info, TARGET_CHANNEL_ID, scraped_at))
     
     if all_comments:
@@ -122,11 +122,11 @@ def main():
         load_local_file_to_bigquery(temp_file, BQ_DATASET, BQ_TABLE)
         os.remove(temp_file)
         
-        # 🌟 ここがポイント：コメントがある時だけクレンジング処理を行う！
+        # Note: Execute cleansing queries only when comments exist
         run_bigquery_queries()
-        print("🎉 全てのバッチ処理が正常に完了しました。")
+        print("🎉 All batch processing completed successfully.")
     else:
-        print("⚠️ 今回取得できたコメントは0件でした。BigQueryへの保存と整理をスキップして終了します。")
+        print("⚠️ 0 comments retrieved. Skipping BigQuery loading and cleansing.")
 
 if __name__ == "__main__":
     main()
