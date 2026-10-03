@@ -1,8 +1,8 @@
 name: JAL ETL
 on:
   schedule:
-    - cron: '0 14 * * *' # 毎日14時に実行（ウマ娘の2時間後）
-  workflow_dispatch:      # 手動実行ボタンを有効化
+    - cron: '0 14 * * *' # Runs daily at 14:00 (2 hours after Uma Musume)
+  workflow_dispatch:      # Enable manual trigger
 
 jobs:
   build:
