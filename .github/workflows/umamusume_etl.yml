@@ -1,8 +1,8 @@
 name: UmaMusume ETL
 on:
   schedule:
-    - cron: '0 12 * * *' # 毎日12時に実行
-  workflow_dispatch:      # 手動実行ボタンを有効化
+    - cron: '0 12 * * *' # Runs daily at 12:00
+  workflow_dispatch:      # Enable manual trigger
 
 jobs:
   build:
